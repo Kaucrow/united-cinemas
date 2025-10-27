@@ -4,6 +4,7 @@ use united_cinemas::{
     prelude::*,
     settings::Settings,
     telemetry,
+    components::signaling_server::SignalingServer,
 };
 
 #[tokio::main]
@@ -16,13 +17,11 @@ async fn main() -> Result<()> {
     telemetry::init_subscriber(subscriber);
 
     let port = settings.port;
-    let mut sdp_chan_rx = signal::http_sdp_server(port).await;
+    let mut signaling = SignalingServer::new(port).await?;
 
     // Wait for the offer
-    info!("wait for the offer from http_sdp_server\n");
-    let line = sdp_chan_rx.recv().await.unwrap();
-    let desc_data = signal::decode(line.as_str())?;
-    let offer = serde_json::from_str::<RTCSessionDescription>(&desc_data)?;
+    info!("Signaling server waiting for offer on localhost:{}/sdp", port);
+    let offer = signaling.wait_for_offer().await?;
     //println!("Receive offer from http_sdp_server:\n{:?}", offer);
 
     // Everything below is the WebRTC-rs API! Thanks for using it ❤️.
@@ -149,9 +148,8 @@ async fn main() -> Result<()> {
 
     // Output the answer in base64 so we can paste it in browser
     if let Some(local_desc) = peer_connection.local_description().await {
-        let json_str = serde_json::to_string(&local_desc)?;
-        let b64 = signal::encode(&json_str);
-        println!("{b64}");
+        let local_desc = signaling.encode_sdp(&local_desc)?;
+        println!("{local_desc}");
     } else {
         println!("generate local_description failed!");
     }
@@ -160,9 +158,7 @@ async fn main() -> Result<()> {
         loop {
             println!("\nCurl an base64 SDP to start sendonly peer connection");
 
-            let line = sdp_chan_rx.recv().await.unwrap();
-            let desc_data = signal::decode(line.as_str())?;
-            let recv_only_offer = serde_json::from_str::<RTCSessionDescription>(&desc_data)?;
+            let recv_only_offer = signaling.wait_for_offer().await?;
 
             // Create a MediaEngine object to configure the supported codec
             let mut m = MediaEngine::default();
@@ -238,9 +234,8 @@ async fn main() -> Result<()> {
             let _ = gather_complete.recv().await;
 
             if let Some(local_desc) = peer_connection.local_description().await {
-                let json_str = serde_json::to_string(&local_desc)?;
-                let b64 = signal::encode(&json_str);
-                println!("{b64}");
+                let local_desc = signaling.encode_sdp(&local_desc)?;
+                println!("{local_desc}");
             } else {
                 println!("generate local_description failed!");
             }

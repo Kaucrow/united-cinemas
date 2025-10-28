@@ -4,7 +4,7 @@ use united_cinemas::{
     prelude::*,
     settings::Settings,
     telemetry,
-    components::{ SignalingServer, PeerConnectionFactory },
+    components::*
 };
 
 #[tokio::main]
@@ -21,6 +21,7 @@ async fn main() -> Result<()> {
     // Init components
     let mut signaling = SignalingServer::new(port).await?;
     let peer_conn_factory = PeerConnectionFactory::new().await?;
+    let mut track_manager = TrackManager::new();
 
     // Wait for the offer
     info!("Signaling server waiting for offer on localhost:{}/sdp", port);
@@ -34,64 +35,7 @@ async fn main() -> Result<()> {
         .add_transceiver_from_kind(RTPCodecType::Video, None)
         .await?;
 
-    let (local_track_chan_tx, mut local_track_chan_rx) =
-        tokio::sync::mpsc::channel::<Arc<TrackLocalStaticRTP>>(1);
-
-    let local_track_chan_tx = Arc::new(local_track_chan_tx);
-    // Set a handler for when a new remote track starts, this handler copies inbound RTP packets,
-    // replaces the SSRC and sends them back
-    let pc = Arc::downgrade(&peer_connection);
-    peer_connection.on_track(Box::new(move |track, _, _| {
-        // Send a PLI on an interval so that the publisher is pushing a keyframe every rtcpPLIInterval
-        // This is a temporary fix until we implement incoming RTCP events, then we would push a PLI only when a viewer requests it
-        let media_ssrc = track.ssrc();
-        let pc2 = pc.clone();
-        tokio::spawn(async move {
-            let mut result = Result::<usize>::Ok(0);
-            while result.is_ok() {
-                let timeout = tokio::time::sleep(Duration::from_secs(3));
-                tokio::pin!(timeout);
-
-                tokio::select! {
-                    _ = timeout.as_mut() =>{
-                        if let Some(pc) = pc2.upgrade(){
-                            result = pc.write_rtcp(&[Box::new(PictureLossIndication{
-                                sender_ssrc: 0,
-                                media_ssrc,
-                            })]).await.map_err(Into::into);
-                        }else{
-                            break;
-                        }
-                    }
-                };
-            }
-        });
-
-        let local_track_chan_tx2 = Arc::clone(&local_track_chan_tx);
-        tokio::spawn(async move {
-            // Create Track that we send video back to browser on
-            let local_track = Arc::new(TrackLocalStaticRTP::new(
-                track.codec().capability,
-                "video".to_owned(),
-                "webrtc-rs".to_owned(),
-            ));
-            let _ = local_track_chan_tx2.send(Arc::clone(&local_track)).await;
-
-            // Read RTP packets being sent to webrtc-rs
-            while let Ok((rtp, _)) = track.read_rtp().await {
-                if let Err(err) = local_track.write_rtp(&rtp).await {
-                    if Error::ErrClosedPipe != err {
-                        print!("output track write_rtp got error: {err} and break");
-                        break;
-                    } else {
-                        print!("output track write_rtp got error: {err}");
-                    }
-                }
-            }
-        });
-
-        Box::pin(async {})
-    }));
+    let _ = track_manager.setup_track_handlers(Arc::clone(&peer_connection));
 
     // Set the handler for Peer connection state
     // This will notify you when the peer has connected/disconnected
@@ -125,7 +69,7 @@ async fn main() -> Result<()> {
         println!("generate local_description failed!");
     }
 
-    if let Some(local_track) = local_track_chan_rx.recv().await {
+    if let Some(local_track) = track_manager.get_track_receiver().recv().await {
         loop {
             println!("\nCurl an base64 SDP to start sendonly peer connection");
 

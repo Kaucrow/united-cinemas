@@ -21,17 +21,6 @@ impl PeerConnectionFactory {
         Ok(Self { api })
     }
 
-    // Read incoming RTCP packets
-    // Before these packets are returned they are processed by interceptors. For things
-    // like NACK this needs to be called.
-    fn spawn_rtcp_handler(&self, rtp_sender: Arc<RTCRtpSender>) {
-        tokio::spawn(async move {
-            let mut rtcp_buf = vec![0u8; 1500];
-            while let Ok((_, _)) = rtp_sender.read(&mut rtcp_buf).await {}
-            Result::<()>::Ok(())
-        });
-    }
-
     pub async fn create_peer_connection(&self) -> Result<Arc<RTCPeerConnection>> {
         let config = RTCConfiguration {
             ice_servers: vec![RTCIceServer {
@@ -58,5 +47,16 @@ impl PeerConnectionFactory {
         self.spawn_rtcp_handler(rtp_sender);
 
         Ok(peer_connection)
+    }
+
+    // Read incoming RTCP packets
+    // Before these packets are returned they are processed by interceptors. For things
+    // like NACK this needs to be called.
+    fn spawn_rtcp_handler(&self, rtp_sender: Arc<RTCRtpSender>) {
+        tokio::spawn(async move {
+            let mut rtcp_buf = vec![0u8; 1500];
+            while let Ok((_, _)) = rtp_sender.read(&mut rtcp_buf).await {}
+            Result::<()>::Ok(())
+        });
     }
 }

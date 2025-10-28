@@ -4,7 +4,7 @@ use united_cinemas::{
     prelude::*,
     settings::Settings,
     telemetry,
-    components::signaling_server::SignalingServer,
+    components::{ SignalingServer, PeerConnectionFactory },
 };
 
 #[tokio::main]
@@ -17,46 +17,17 @@ async fn main() -> Result<()> {
     telemetry::init_subscriber(subscriber);
 
     let port = settings.port;
+
+    // Init components
     let mut signaling = SignalingServer::new(port).await?;
+    let peer_conn_factory = PeerConnectionFactory::new().await?;
 
     // Wait for the offer
     info!("Signaling server waiting for offer on localhost:{}/sdp", port);
     let offer = signaling.wait_for_offer().await?;
-    //println!("Receive offer from http_sdp_server:\n{:?}", offer);
-
-    // Everything below is the WebRTC-rs API! Thanks for using it ❤️.
-
-    // Create a MediaEngine object to configure the supported codec
-    let mut m = MediaEngine::default();
-
-    m.register_default_codecs()?;
-
-    // Create a InterceptorRegistry. This is the user configurable RTP/RTCP Pipeline.
-    // This provides NACKs, RTCP Reports and other features. If you use `webrtc.NewPeerConnection`
-    // this is enabled by default. If you are manually managing You MUST create a InterceptorRegistry
-    // for each PeerConnection.
-    let mut registry = Registry::new();
-
-    // Use the default set of Interceptors
-    registry = register_default_interceptors(registry, &mut m)?;
-
-    // Create the API object with the MediaEngine
-    let api = APIBuilder::new()
-        .with_media_engine(m)
-        .with_interceptor_registry(registry)
-        .build();
-
-    // Prepare the configuration
-    let config = RTCConfiguration {
-        ice_servers: vec![RTCIceServer {
-            urls: vec!["stun:stun.l.google.com:19302".to_owned()],
-            ..Default::default()
-        }],
-        ..Default::default()
-    };
 
     // Create a new RTCPeerConnection
-    let peer_connection = Arc::new(api.new_peer_connection(config).await?);
+    let peer_connection = peer_conn_factory.create_peer_connection().await?;
 
     // Allow us to receive 1 video track
     peer_connection
@@ -165,45 +136,9 @@ async fn main() -> Result<()> {
 
             m.register_default_codecs()?;
 
-            // Create a InterceptorRegistry. This is the user configurable RTP/RTCP Pipeline.
-            // This provides NACKs, RTCP Reports and other features. If you use `webrtc.NewPeerConnection`
-            // this is enabled by default. If you are manually managing You MUST create a InterceptorRegistry
-            // for each PeerConnection.
-            let mut registry = Registry::new();
-
-            // Use the default set of Interceptors
-            registry = register_default_interceptors(registry, &mut m)?;
-
-            // Create the API object with the MediaEngine
-            let api = APIBuilder::new()
-                .with_media_engine(m)
-                .with_interceptor_registry(registry)
-                .build();
-
-            // Prepare the configuration
-            let config = RTCConfiguration {
-                ice_servers: vec![RTCIceServer {
-                    urls: vec!["stun:stun.l.google.com:19302".to_owned()],
-                    ..Default::default()
-                }],
-                ..Default::default()
-            };
-
             // Create a new RTCPeerConnection
-            let peer_connection = Arc::new(api.new_peer_connection(config).await?);
-
-            let rtp_sender = peer_connection
-                .add_track(Arc::clone(&local_track) as Arc<dyn TrackLocal + Send + Sync>)
-                .await?;
-
-            // Read incoming RTCP packets
-            // Before these packets are returned they are processed by interceptors. For things
-            // like NACK this needs to be called.
-            tokio::spawn(async move {
-                let mut rtcp_buf = vec![0u8; 1500];
-                while let Ok((_, _)) = rtp_sender.read(&mut rtcp_buf).await {}
-                Result::<()>::Ok(())
-            });
+            let peer_connection = peer_conn_factory
+                .create_recv_only_peer_connection(Arc::clone(&local_track)).await?;
 
             // Set the handler for Peer connection state
             // This will notify you when the peer has connected/disconnected

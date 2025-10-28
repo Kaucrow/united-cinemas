@@ -47,7 +47,7 @@ impl SignalingServer {
 
     async fn remote_handler(req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
         match (req.method(), req.uri().path()) {
-            // A HTTP handler that processes a SessionDescription given to us from the other WebRTC-rs or Pion process
+            // An HTTP handler that processes a SessionDescription given to us from the other WebRTC-rs or Pion process
             (&Method::POST, "/sdp") => {
                 //println!("remote_handler receive from /sdp");
                 let sdp_str = match std::str::from_utf8(&hyper::body::to_bytes(req.into_body()).await?)

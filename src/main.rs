@@ -1,5 +1,4 @@
 use anyhow::Result;
-use tokio::time::Duration;
 use united_cinemas::{
     prelude::*,
     settings::Settings,
@@ -20,32 +19,16 @@ async fn main() -> Result<()> {
 
     // Init components
     let mut signaling = SignalingServer::new(port).await?;
-    let peer_conn_factory = PeerConnectionFactory::new().await?;
+    let peer_conn_factory = Arc::new(PeerConnectionFactory::new().await?);
     let mut track_manager = TrackManager::new();
+    let session_manager = SessionManager::new(Arc::clone(&peer_conn_factory));
 
     // Wait for the offer
     info!("Signaling server waiting for offer on localhost:{}/sdp", port);
-    let offer = signaling.wait_for_offer().await?;
-
-    // Create a new RTCPeerConnection
-    let peer_connection = peer_conn_factory.create_peer_connection().await?;
+    let broadcaster_offer = signaling.wait_for_offer().await?;
 
     // Allow us to receive 1 video track
-    peer_connection
-        .add_transceiver_from_kind(RTPCodecType::Video, None)
-        .await?;
-
-    let _ = track_manager.setup_track_handlers(Arc::clone(&peer_connection));
-
-    // Set the handler for Peer connection state
-    // This will notify you when the peer has connected/disconnected
-    peer_connection.on_peer_connection_state_change(Box::new(move |s: RTCPeerConnectionState| {
-        println!("Peer Connection State has changed: {s}");
-        Box::pin(async {})
-    }));
-
-    // Set the remote SessionDescription
-    peer_connection.set_remote_description(offer).await?;
+    let peer_connection = session_manager.create_broadcaster_session(broadcaster_offer, &mut track_manager).await?;
 
     // Create an answer
     let answer = peer_connection.create_answer(None).await?;
@@ -73,30 +56,10 @@ async fn main() -> Result<()> {
         loop {
             println!("\nCurl an base64 SDP to start sendonly peer connection");
 
-            let recv_only_offer = signaling.wait_for_offer().await?;
-
-            // Create a MediaEngine object to configure the supported codec
-            let mut m = MediaEngine::default();
-
-            m.register_default_codecs()?;
+            let viewer_offer = signaling.wait_for_offer().await?;
 
             // Create a new RTCPeerConnection
-            let peer_connection = peer_conn_factory
-                .create_recv_only_peer_connection(Arc::clone(&local_track)).await?;
-
-            // Set the handler for Peer connection state
-            // This will notify you when the peer has connected/disconnected
-            peer_connection.on_peer_connection_state_change(Box::new(
-                move |s: RTCPeerConnectionState| {
-                    println!("Peer Connection State has changed: {s}");
-                    Box::pin(async {})
-                },
-            ));
-
-            // Set the remote SessionDescription
-            peer_connection
-                .set_remote_description(recv_only_offer)
-                .await?;
+            let peer_connection = session_manager.create_viewer_session(viewer_offer, Arc::clone(&local_track)).await?;
 
             // Create an answer
             let answer = peer_connection.create_answer(None).await?;

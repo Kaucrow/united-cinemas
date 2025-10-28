@@ -33,9 +33,8 @@ impl SignalingServer {
             let service =
                 make_service_fn(|_| async { Ok::<_, hyper::Error>(service_fn(SignalingServer::remote_handler)) });
             let server = Server::bind(&addr).serve(service);
-            // Run this server for... forever!
             if let Err(e) = server.await {
-                eprintln!("server error: {e}");
+                error!("Server error: {e}");
             }
         });
 

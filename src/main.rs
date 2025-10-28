@@ -30,27 +30,12 @@ async fn main() -> Result<()> {
     // Allow us to receive 1 video track
     let peer_connection = session_manager.create_broadcaster_session(broadcaster_offer, &mut track_manager).await?;
 
-    // Create an answer
-    let answer = peer_connection.create_answer(None).await?;
-
-    // Create channel that is blocked until ICE Gathering is complete
-    let mut gather_complete = peer_connection.gathering_complete_promise().await;
-
-    // Sets the LocalDescription, and starts our UDP listeners
-    peer_connection.set_local_description(answer).await?;
-
-    // Block until ICE Gathering is complete, disabling trickle ICE
-    // we do this because we only can exchange one signaling message
-    // in a production application you should exchange ICE Candidates via OnICECandidate
-    let _ = gather_complete.recv().await;
+    // Create the session description
+    let local_desc = session_manager.create_answer(&peer_connection).await?;
 
     // Output the answer in base64 so we can paste it in browser
-    if let Some(local_desc) = peer_connection.local_description().await {
-        let local_desc = signaling.encode_sdp(&local_desc)?;
-        println!("{local_desc}");
-    } else {
-        println!("generate local_description failed!");
-    }
+    let answer = signaling.encode_sdp(&local_desc)?;
+    println!("{answer}");
 
     if let Some(local_track) = track_manager.get_track_receiver().recv().await {
         loop {
@@ -61,26 +46,12 @@ async fn main() -> Result<()> {
             // Create a new RTCPeerConnection
             let peer_connection = session_manager.create_viewer_session(viewer_offer, Arc::clone(&local_track)).await?;
 
-            // Create an answer
-            let answer = peer_connection.create_answer(None).await?;
+            // Create the session description
+            let local_desc = session_manager.create_answer(&peer_connection).await?;
 
-            // Create channel that is blocked until ICE Gathering is complete
-            let mut gather_complete = peer_connection.gathering_complete_promise().await;
-
-            // Sets the LocalDescription, and starts our UDP listeners
-            peer_connection.set_local_description(answer).await?;
-
-            // Block until ICE Gathering is complete, disabling trickle ICE
-            // we do this because we only can exchange one signaling message
-            // in a production application you should exchange ICE Candidates via OnICECandidate
-            let _ = gather_complete.recv().await;
-
-            if let Some(local_desc) = peer_connection.local_description().await {
-                let local_desc = signaling.encode_sdp(&local_desc)?;
-                println!("{local_desc}");
-            } else {
-                println!("generate local_description failed!");
-            }
+            // Output the answer in base64 so we can paste it in browser
+            let answer = signaling.encode_sdp(&local_desc)?;
+            println!("{answer}");
         }
     }
 

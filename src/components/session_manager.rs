@@ -59,7 +59,7 @@ impl SessionManager {
 
     pub async fn create_answer(
         &self,
-        peer_connection: Arc<RTCPeerConnection>
+        peer_connection: &Arc<RTCPeerConnection>
     ) -> Result<RTCSessionDescription> {
         let answer = peer_connection.create_answer(None).await?;
 

@@ -1,0 +1,44 @@
+body {
+  font-family: Arial, sans-serif;
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+#output {
+  border: 1px solid #ccc;
+  padding: 15px;
+  margin: 10px 0;
+  min-height: 100px;
+  background-color: #f9f9f9;
+  border-radius: 5px;
+}
+
+button {
+  padding: 10px 15px;
+  background-color: #007bff;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+button:hover {
+  background-color: #0056b3;
+}
+
+button:disabled {
+  background-color: #6c757d;
+  cursor: not-allowed;
+}
+
+.status {
+  padding: 5px 10px;
+  border-radius: 3px;
+  display: inline-block;
+  margin-bottom: 10px;
+}
+
+.connected { background-color: #d4edda; color: #155724; }
+.disconnected { background-color: #f8d7da; color: #721c24; }
+.connecting { background-color: #fff3cd; color: #856404; }

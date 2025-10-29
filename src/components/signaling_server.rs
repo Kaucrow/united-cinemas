@@ -1,101 +1,79 @@
 use crate::prelude::*;
-use anyhow::Result;
-use lazy_static::lazy_static;
-use std::net::SocketAddr;
-use std::str::FromStr;
-use std::sync::Arc;
 
-use base64::prelude::BASE64_STANDARD;
-use base64::Engine;
-use hyper::service::{make_service_fn, service_fn};
-use hyper::{Body, Method, Request, Response, Server, StatusCode};
-use tokio::sync::{mpsc, Mutex};
-lazy_static! {
-    static ref SDP_CHAN_TX_MUTEX: Arc<Mutex<Option<mpsc::Sender<String>>>> =
-        Arc::new(Mutex::new(None));
+use anyhow::Result;
+use base64::{
+    prelude::BASE64_STANDARD,
+    Engine,
+};
+
+use actix_web::{ rt, web, App, Error, HttpRequest, HttpResponse, HttpServer };
+use actix_ws::AggregatedMessage;
+use futures_util::StreamExt;
+
+/// This message will be sent from the SignalingServer to the ws_handler via the ws_send channel
+pub enum ServerToClientMsg {
+    Text(String),
+    Close,
+}
+
+/// This message will be sent from the ws_handler to the SignalingServer via the ws_recv channel
+struct SdpMessage {
+    sdp: String,
+    // Used by the SignalingServer to send a response back to the ws_handler
+    responder: oneshot::Sender<String>,
 }
 
 pub struct SignalingServer {
-    port: u16,
-    sdp_chan_rx: mpsc::Receiver<String>,
+    ws_recv_rx: mpsc::Receiver<SdpMessage>,
+    // Receiver to get the session's WebSocket message sender from the ws_handler
+    ws_send_rx: mpsc::Receiver<mpsc::Sender<ServerToClientMsg>>, 
 }
 
 impl SignalingServer {
     pub async fn new(port: u16) -> Result<Self> {
-        let (sdp_chan_tx, sdp_chan_rx) = mpsc::channel::<String>(1);
-        {
-            let mut tx = SDP_CHAN_TX_MUTEX.lock().await;
-            *tx = Some(sdp_chan_tx);
-        }
+        let (ws_recv_tx, ws_recv_rx) = mpsc::channel::<SdpMessage>(1);
+
+        // Create a channel for receiving the active WS sender
+        let (ws_send_tx, ws_send_rx) = mpsc::channel::<mpsc::Sender<ServerToClientMsg>>(1);
+
+        // Inject the Session Sender transmitter into Actix app state
+        let ws_recv_tx_data = web::Data::new(ws_recv_tx);
+        let ws_send_tx_data = web::Data::new(ws_send_tx);
 
         tokio::spawn(async move {
-            let addr = SocketAddr::from_str(&format!("0.0.0.0:{port}")).unwrap();
-            let service =
-                make_service_fn(|_| async { Ok::<_, hyper::Error>(service_fn(SignalingServer::remote_handler)) });
-            let server = Server::bind(&addr).serve(service);
+            let server = HttpServer::new(move || {
+                App::new()
+                    .app_data(ws_recv_tx_data.clone())
+                    .app_data(ws_send_tx_data.clone()) // Inject the new sender
+                    .route("/ws", web::get().to(ws_handler))
+            })
+            .bind(("0.0.0.0", port))
+            .map_err(|e| anyhow!("Failed to bind Actix-Web server: {}", e))?
+            .run();
+
             if let Err(e) = server.await {
-                error!("Server error: {e}");
+                error!("Actix-Web server error: {e}");
             }
+            Ok::<(), anyhow::Error>(())
         });
 
         Ok(Self {
-            port,
-            sdp_chan_rx
+            ws_recv_rx,
+            ws_send_rx,
         })
     }
 
-    async fn remote_handler(req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
-        match (req.method(), req.uri().path()) {
-            // An HTTP handler that processes a SessionDescription given to us from the other WebRTC-rs or Pion process
-            (&Method::POST, "/sdp") => {
-                //println!("remote_handler receive from /sdp");
-                let sdp_str = match std::str::from_utf8(&hyper::body::to_bytes(req.into_body()).await?)
-                {
-                    Ok(s) => s.to_owned(),
-                    Err(err) => panic!("{}", err),
-                };
+    pub async fn wait_for_offer(
+        &mut self,
+    ) -> Result<(RTCSessionDescription, oneshot::Sender<String>)> {
+        let sender = self.ws_send_rx.recv().await.unwrap();
 
-                {
-                    let sdp_chan_tx = SDP_CHAN_TX_MUTEX.lock().await;
-                    if let Some(tx) = &*sdp_chan_tx {
-                        let _ = tx.send(sdp_str).await;
-                    }
-                }
+        let msg = self.ws_recv_rx.recv().await.unwrap();
 
-                let mut response = Response::new(Body::empty());
-                *response.status_mut() = StatusCode::OK;
-                Ok(response)
-            }
-            // Return the 404 Not Found for other routes.
-            _ => {
-                let mut not_found = Response::default();
-                *not_found.status_mut() = StatusCode::NOT_FOUND;
-                Ok(not_found)
-            }
-        }
-    }
-
-    /// encode encodes the input in base64
-    /// It can optionally zip the input before encoding
-    fn encode(b: &str) -> String {
-        BASE64_STANDARD.encode(b)
-    }
-
-    /// decode decodes the input from base64
-    /// It can optionally unzip the input after decoding
-    fn decode(s: &str) -> Result<String> {
-        let b = BASE64_STANDARD.decode(s)?;
-
-        let s = String::from_utf8(b)?;
-        Ok(s)
-    }
-
-    pub async fn wait_for_offer(&mut self) -> Result<RTCSessionDescription> {
-        let sdp_chan_rx = &mut self.sdp_chan_rx;
-        let line = sdp_chan_rx.recv().await.unwrap();
-        let desc_data = SignalingServer::decode(line.as_str())?;
+        let desc_data = SignalingServer::decode(&msg.sdp)?;
         let offer = serde_json::from_str::<RTCSessionDescription>(&desc_data)?;
-        Ok(offer)
+
+        Ok((offer, msg.responder))
     }
 
     pub fn encode_sdp(&self, sdp: &RTCSessionDescription) -> Result<String> {
@@ -108,4 +86,98 @@ impl SignalingServer {
         let sdp = serde_json::from_str::<RTCSessionDescription>(&desc_data)?;
         Ok(sdp)
     }
+
+    fn encode(b: &str) -> String {
+        BASE64_STANDARD.encode(b)
+    }
+
+    fn decode(s: &str) -> Result<String> {
+        let b = BASE64_STANDARD.decode(s)?;
+        let s = String::from_utf8(b)?;
+        Ok(s)
+    }
+}
+
+async fn ws_handler(
+    req: HttpRequest,
+    stream: web::Payload,
+    ws_recv_tx: web::Data<mpsc::Sender<SdpMessage>>,
+    // The ws_handler will use this to send its own message-sender to the SignalingServer
+    ws_send_tx: web::Data<mpsc::Sender<mpsc::Sender<ServerToClientMsg>>>,
+) -> Result<HttpResponse, Error> {
+
+    let (res, mut session, stream) = actix_ws::handle(&req, stream)?;
+    let mut stream = stream.aggregate_continuations().max_continuation_size(2_usize.pow(20));
+    let ws_recv_tx = ws_recv_tx.get_ref().clone();
+    let ws_send_tx = ws_send_tx.get_ref().clone();
+
+    // Create a channel for the SignalingServer to send messages to this WebSocket session
+    let (to_client_tx, mut to_client_rx) = mpsc::channel::<ServerToClientMsg>(10);
+
+    // Send the to_client_tx channel to the SignalingServer thread
+    // This allows the main SignalingServer thread to talk to this specific WebSocket connection
+    if let Err(e) = ws_send_tx.send(to_client_tx).await {
+        error!("Failed to register client sender with SignalingServer: {}", e);
+        let _ = session.close(None).await;
+        return Ok(res); // Return response but stop processing
+    }
+
+    // Spawn a new task to handle the message stream
+    rt::spawn(async move {
+        loop {
+            tokio::select! {
+                /* --- Handle incoming client messages (offers, candidates, etc.) --- */
+                msg = stream.next() => {
+                    match msg {
+                        Some(Ok(AggregatedMessage::Text(text))) => {
+                            let (resp_tx, resp_rx) = oneshot::channel::<String>();
+                            let sdp_msg = SdpMessage { sdp: text.to_string(), responder: resp_tx };
+
+                            if let Err(e) = ws_recv_tx.send(sdp_msg).await {
+                                error!("Failed to send SDP message to signaling server: {e}");
+                                break;
+                            }
+
+                            match resp_rx.await {
+                                Ok(answer_sdp) => {
+                                    if let Err(e) = session.text(answer_sdp).await {
+                                        error!("Failed to send SDP answer to client: {e}");
+                                    }
+                                    break;  // Close the WebSocket channel
+                                }
+                                Err(e) => {
+                                    error!("Signaling server failed to provide an answer: {e}");
+                                }
+                            }
+                        }
+                        Some(Ok(AggregatedMessage::Ping(msg))) => {
+                            if let Err(e) = session.pong(&msg).await { error!("Failed to send PONG: {e}"); break; }
+                        }
+                        Some(Ok(AggregatedMessage::Close(_))) | None => break, // Client closed or stream ended
+                        Some(Err(e)) => { error!("WebSocket error: {e}"); break; }
+                        _ => (), // Ignore other messages
+                    }
+                }
+
+                /* --- Handle outgoing server messages --- */
+                out_msg = to_client_rx.recv() => {
+                    match out_msg {
+                        Some(ServerToClientMsg::Text(text)) => {
+                            if let Err(e) = session.text(text).await {
+                                error!("Failed to send ServerToClientMsg::Text: {e}");
+                                break;
+                            }
+                        }
+                        Some(ServerToClientMsg::Close) | None => break, // Server requested close or channel closed
+                    }
+                }
+            }
+        }
+ 
+        // Ensure the session is closed when the task ends
+        let _ = session.close(None).await;
+        // NOTE: The mpsc sender for SdpMessage is dropped, signaling to SignalingServer
+    });
+
+    Ok(res)
 }

@@ -25,7 +25,7 @@ async fn main() -> Result<()> {
 
     // Wait for the offer
     info!("Signaling server waiting for offer on localhost:{}/sdp", port);
-    let broadcaster_offer = signaling.wait_for_offer().await?;
+    let (broadcaster_offer, broadcaster_ws_sender) = signaling.wait_for_offer().await?;
 
     // Allow us to receive 1 video track
     let peer_connection = session_manager.create_broadcaster_session(broadcaster_offer, &mut track_manager).await?;
@@ -33,15 +33,13 @@ async fn main() -> Result<()> {
     // Create the session description
     let local_desc = session_manager.create_answer(&peer_connection).await?;
 
-    // Output the answer in base64 so we can paste it in browser
-    let answer = signaling.encode_sdp(&local_desc)?;
-    println!("{answer}");
+    // Encode the response in base64 and send it back over the broadcaster WebSocket
+    let response = signaling.encode_sdp(&local_desc)?;
+    let _ = broadcaster_ws_sender.send(response);
 
     if let Some(local_track) = track_manager.get_track_receiver().recv().await {
         loop {
-            println!("\nCurl an base64 SDP to start sendonly peer connection");
-
-            let viewer_offer = signaling.wait_for_offer().await?;
+            let (viewer_offer, viewer_ws_sender) = signaling.wait_for_offer().await?;
 
             // Create a new RTCPeerConnection
             let peer_connection = session_manager.create_viewer_session(viewer_offer, Arc::clone(&local_track)).await?;
@@ -49,9 +47,9 @@ async fn main() -> Result<()> {
             // Create the session description
             let local_desc = session_manager.create_answer(&peer_connection).await?;
 
-            // Output the answer in base64 so we can paste it in browser
-            let answer = signaling.encode_sdp(&local_desc)?;
-            println!("{answer}");
+            // Encode the response in base64 and send it back over the viewer WebSocket
+            let response = signaling.encode_sdp(&local_desc)?;
+            let _ = viewer_ws_sender.send(response);
         }
     }
 

@@ -9,6 +9,15 @@ use base64::{
 use actix_web::{ rt, web, App, Error, HttpRequest, HttpResponse, HttpServer };
 use actix_ws::AggregatedMessage;
 use futures_util::StreamExt;
+use serde_json::ser;
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct ClientPayload {
+    pub action: String,
+    pub name: String,
+    pub sdp: String,
+}
+
 
 /// This message will be sent from the SignalingServer to the ws_handler via the ws_send channel
 pub enum ServerToClientMsg {
@@ -18,7 +27,7 @@ pub enum ServerToClientMsg {
 
 /// This message will be sent from the ws_handler to the SignalingServer via the ws_recv channel
 struct SdpMessage {
-    sdp: String,
+    payload: ClientPayload,
     // Used by the SignalingServer to send a response back to the ws_handler
     responder: oneshot::Sender<String>,
 }
@@ -65,15 +74,15 @@ impl SignalingServer {
 
     pub async fn wait_for_offer(
         &mut self,
-    ) -> Result<(RTCSessionDescription, oneshot::Sender<String>)> {
-        let sender = self.ws_send_rx.recv().await.unwrap();
+    ) -> Result<(ClientPayload, oneshot::Sender<String>)> {
+        let _sender = self.ws_send_rx.recv().await.unwrap();
 
         let msg = self.ws_recv_rx.recv().await.unwrap();
 
-        let desc_data = SignalingServer::decode(&msg.sdp)?;
-        let offer = serde_json::from_str::<RTCSessionDescription>(&desc_data)?;
+        // let desc_data = SignalingServer::decode(&msg.sdp)?;
+        // let offer = serde_json::from_str::<RTCSessionDescription>(&msg.payload.sdp)?;
 
-        Ok((offer, msg.responder))
+        Ok((msg.payload, msg.responder))
     }
 
     pub fn encode_sdp(&self, sdp: &RTCSessionDescription) -> Result<String> {
@@ -130,24 +139,36 @@ async fn ws_handler(
                 msg = stream.next() => {
                     match msg {
                         Some(Ok(AggregatedMessage::Text(text))) => {
-                            let (resp_tx, resp_rx) = oneshot::channel::<String>();
-                            let sdp_msg = SdpMessage { sdp: text.to_string(), responder: resp_tx };
+                            match BASE64_STANDARD.decode(&text) {
+                                Ok(raw) => match String::from_utf8(raw) {
+                                    Ok(payload_json) => match serde_json::from_str::<ClientPayload>(&payload_json) {
+                                        Ok(payload) => {
+                                            let (resp_tx, resp_rx) = oneshot::channel::<String>();
+                                            // SdpMessage expects a parsed payload (not the raw base64)
+                                            let sdp_msg = SdpMessage { payload: payload.clone(), responder: resp_tx };
 
-                            if let Err(e) = ws_recv_tx.send(sdp_msg).await {
-                                error!("Failed to send SDP message to signaling server: {e}");
-                                break;
-                            }
+                                            if let Err(e) = ws_recv_tx.send(sdp_msg).await {
+                                                error!("Failed to send SDP message to signaling server: {}", e);
+                                                break;
+                                            }
 
-                            match resp_rx.await {
-                                Ok(answer_sdp) => {
-                                    if let Err(e) = session.text(answer_sdp).await {
-                                        error!("Failed to send SDP answer to client: {e}");
-                                    }
-                                    break;  // Close the WebSocket channel
-                                }
-                                Err(e) => {
-                                    error!("Signaling server failed to provide an answer: {e}");
-                                }
+                                            match resp_rx.await {
+                                                Ok(answer_sdp) => {
+                                                    if let Err(e) = session.text(answer_sdp).await {
+                                                        error!("Failed to send SDP answer to client: {}", e);
+                                                    }
+                                                    break; 
+                                                }
+                                                Err(e) => {
+                                                    error!("Signaling server failed to provide an answer: {}", e);
+                                                }
+                                            }
+                                        }
+                                        Err(e) => { error!("Failed to parse ClientPayload JSON: {}", e); }
+                                    },
+                                    Err(e) => { error!("Failed to parse UTF-8 from decoded SDP: {}", e); }
+                                },
+                                Err(e) => { error!("Invalid base64 SDP received: {}", e); }
                             }
                         }
                         Some(Ok(AggregatedMessage::Ping(msg))) => {

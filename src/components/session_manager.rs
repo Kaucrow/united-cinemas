@@ -4,6 +4,7 @@ use crate::{
 };
 use anyhow::Result;
 
+#[derive(Clone)]
 pub struct SessionManager {
     peer_conn_factory: Arc<PeerConnectionFactory>,
 }

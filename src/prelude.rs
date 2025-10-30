@@ -30,6 +30,7 @@ pub use webrtc::{
     Error
 };
 pub use std::{
+    collections::HashMap,
     io::Write,
     sync::{ Arc, Weak },
     path::PathBuf

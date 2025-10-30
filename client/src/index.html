@@ -10,10 +10,14 @@
   <h1>WebRTC Thingamajig</h1>
  
   <div id="status" class="status disconnected">Disconnected</div>
+  <div>
+    <label for="streamName">Stream Name:</label>
+    <input type="text" id="streamName" value="default-stream"/>
+  </div>
  
   <div>
-    <button id="broadcastBtn" onclick="startSession(true)">Broadcast</button>
-    <button id="joinSessionBtn" onclick="startSession(false)">Join Session</button>
+    <button id="broadcastBtn" onclick="startSession('broadcast')">Broadcast</button>
+    <button id="joinSessionBtn" onclick="startSession('join')">Join Session</button>
   </div>
 
   <video

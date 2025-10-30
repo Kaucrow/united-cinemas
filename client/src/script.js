@@ -3,15 +3,22 @@ const output = document.getElementById('output');
 const connStatus = document.getElementById('status');
 const broadcastBtn = document.getElementById('broadcastBtn');
 const joinSessionBtn = document.getElementById('joinSessionBtn');
+const streamNameInput = document.getElementById('streamName');
 var pc = null;
 
 const WS_URL = 'ws://localhost:8080/ws'
 
-async function startSession(isPublisher) {
+async function startSession(sessionType) {
   console.log('Starting session...');
+  const streamName = streamNameInput.value.trim();
+
+  if (!streamName) {
+    addToOutput('Please enter a stream name.');
+    return;
+  }
   await connectWebSocket();
   console.log('WebSocket connected!');
-  sendOffer(isPublisher);
+  sendOffer(sessionType, streamName);
 }
 
 async function connectWebSocket() {
@@ -20,6 +27,7 @@ async function connectWebSocket() {
       updateStatus('connecting', 'Connecting...');
       broadcastBtn.disabled = true;
       joinSessionBtn.disabled = true;
+      streamNameInput.disabled = true;
  
       socket = new WebSocket(WS_URL);
 
@@ -58,7 +66,7 @@ async function connectWebSocket() {
   });
 }
 
-function sendOffer(isPublisher) {
+function sendOffer(sessionType, streamName) {
   pc = new RTCPeerConnection({
     iceServers: [
       {
@@ -70,18 +78,28 @@ function sendOffer(isPublisher) {
   pc.oniceconnectionstatechange = e => addToOutput(pc.iceConnectionState);
 
   pc.onicecandidate = event => {
-    if (event.candidate === null) {
-      if (socket && socket.readyState === WebSocket.OPEN) {
-        const offer = btoa(JSON.stringify(pc.localDescription));
-        socket.send(offer);
-        addToOutput('Sent: ' + offer);
-      } else {
-        addToOutput('Cannot send message - WebSocket is not connected.');
-      }
+  if (event.candidate === null) {
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      console.warn('socket not open, cannot send offer');
+      return;
     }
-  }
 
-  if (isPublisher) {
+    const innerSdpB64 = btoa(JSON.stringify(pc.localDescription));
+
+    const payload = {
+      action: sessionType,   
+      name: streamName || 'default',
+      sdp: innerSdpB64
+    };
+
+    const outer = btoa(JSON.stringify(payload));
+
+    socket.send(outer);
+    addToOutput(`Sent payload for ${payload.name} (${payload.action})`);
+  }
+};
+
+  if (sessionType === 'broadcast') {
     navigator.mediaDevices.getUserMedia({ video: true, audio: false })
       .then(stream => {
         stream.getTracks().forEach(track => pc.addTrack(track, stream));
@@ -105,13 +123,35 @@ function sendOffer(isPublisher) {
   }
 }
 
+// probably gonna need to change this to handle JSON with action, name, sdp
 function setRemoteDescription(remoteDescription) {
   if (!pc) return;
 
   try {
-    pc.setRemoteDescription(new RTCSessionDescription(JSON.parse(atob(remoteDescription))));
+    // remoteDescription is expected to be a base64 string sent by server
+    const decoded = atob(remoteDescription);
+    const parsed = JSON.parse(decoded);
+
+    if (parsed.type && parsed.sdp) {
+      pc.setRemoteDescription(new RTCSessionDescription(parsed))
+        .then(() => addToOutput('Remote description (direct) set'))
+        .catch(e => addToOutput('Failed to set remote description: ' + e));
+      return;
+    }
+
+    if (parsed.sdp) {
+      // parsed.sdp is expected to be base64 of the inner RTCSessionDescription JSON
+      const inner = JSON.parse(atob(parsed.sdp));
+      pc.setRemoteDescription(new RTCSessionDescription(inner))
+        .then(() => addToOutput('Remote description (from payload) set'))
+        .catch(e => addToOutput('Failed to set remote description: ' + e));
+      return;
+    }
+
+    throw new Error('Unknown remote description format');
   } catch (e) {
-    alert(e);
+    console.error(e);
+    alert('Failed to set remote description: ' + e);
   }
 }
 

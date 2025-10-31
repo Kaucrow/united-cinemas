@@ -127,7 +127,8 @@ function sendOffer(sessionType, streamName) {
         
         videoElement.src = fileURL;
         videoElement.loop = true;
-        videoElement.muted = true; // Mute local playback
+        videoElement.muted = false; // Mute local playback
+        videoElement.controls = true;
         
         // Wait for the video to be ready
         videoElement.oncanplaythrough = async function() {
@@ -212,7 +213,8 @@ function sendOffer(sessionType, streamName) {
       // Add the incoming track to our media stream
       el.srcObject.addTrack(event.track);
       el.autoplay = true;
-      el.controls = true;  // Changed to true so users can control audio
+      el.controls.volume = true; 
+      el.muted = false; 
       
       addToOutput(`Received ${event.track.kind} track from broadcast`);
     }

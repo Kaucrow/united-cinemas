@@ -16,6 +16,7 @@ impl SessionManager {
 
     pub async fn create_broadcaster_session(
         &self,
+        broadcast: String,
         offer: RTCSessionDescription,
         track_manager: &mut TrackManager
     ) -> Result<Arc<RTCPeerConnection>> {
@@ -32,7 +33,7 @@ impl SessionManager {
         let _ = track_manager.setup_track_handlers(Arc::clone(&peer_connection))?;
 
         // Setup connection state handler
-        self.setup_conn_state_handler(Arc::clone(&peer_connection));
+        self.setup_conn_state_handler(broadcast, Arc::clone(&peer_connection));
 
         // Handle offer
         peer_connection.set_remote_description(offer).await?;
@@ -42,6 +43,7 @@ impl SessionManager {
 
     pub async fn create_viewer_session(
         &self,
+        broadcast: String,
         offer: RTCSessionDescription,
         local_track: Arc<TrackLocalStaticRTP>
     ) -> Result<Arc<RTCPeerConnection>> {
@@ -50,7 +52,7 @@ impl SessionManager {
             .await?;
 
         // Setup connection state handler
-        self.setup_conn_state_handler(Arc::clone(&peer_connection));
+        self.setup_conn_state_handler(broadcast, Arc::clone(&peer_connection));
 
         // Handle offer
         peer_connection.set_remote_description(offer).await?;
@@ -77,10 +79,10 @@ impl SessionManager {
             .ok_or_else(|| anyhow::anyhow!("Failed to get local description"))
     }
 
-    fn setup_conn_state_handler(&self, peer_connection: Arc<RTCPeerConnection>) {
+    fn setup_conn_state_handler(&self, broadcast: String, peer_connection: Arc<RTCPeerConnection>) {
         peer_connection.on_peer_connection_state_change(Box::new(
             move |s: RTCPeerConnectionState| {
-                debug!("Peer connection state has changed: {s}");
+                debug!("Broadcast '{}': Peer connection state has changed: {s}", broadcast);
                 Box::pin(async {})
             }
         ));

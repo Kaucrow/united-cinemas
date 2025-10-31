@@ -38,15 +38,14 @@ pub async fn get_subscriber(settings: &Settings) -> Result<(impl tracing::Subscr
     let file_appender = tracing_appender::rolling::never("log", "server.log");
     let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
 
-    let console_filter = "debug,h2=info".to_string();
+    let (console_filter, file_filter) = if settings.debug {
+        ("debug,h2=info,actix_server=off".to_string(), EnvFilter::new("debug,h2=info,actix_server=off"))
+    } else {
+        ("info,h2=info,actix_server=off".to_string(), EnvFilter::new("info,h2=info,actix_server=off"))
+    };
+
     let console_filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new(console_filter));
-
-    let file_filter = if settings.debug {
-        EnvFilter::new("debug,h2=info")
-    } else {
-        EnvFilter::new("info,h2=info")
-    };
 
     let subscriber = tracing_subscriber::Registry::default()
         .with(fmt::layer()

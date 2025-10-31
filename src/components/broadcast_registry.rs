@@ -1,13 +1,11 @@
 use crate::prelude::*;
-use anyhow::Result;
 
-pub struct Broadcast {
-    pub name: String,
-    pub track: Arc<TrackLocalStaticRTP>,
-    pub peer_connection: Arc<RTCPeerConnection>,
+struct Broadcast {
+    pub video_track: Arc<TrackLocalStaticRTP>,
+    pub audio_track: Arc<TrackLocalStaticRTP>,
 }
 
-pub type BroadcastRegistry = Arc<Mutex<HashMap<String, Broadcast>>>;
+type BroadcastRegistry = Arc<Mutex<HashMap<String, Broadcast>>>;
 
 pub struct BroadcastManager {
     registry: BroadcastRegistry,
@@ -19,14 +17,18 @@ impl BroadcastManager {
             registry: Arc::new(Mutex::new(HashMap::new())),
         }
     }
-    pub fn get_registry(&self) -> BroadcastRegistry {
-        Arc::clone(&self.registry)
-    }
-    pub async fn register_broadcast(&self, name: String, track: Arc<TrackLocalStaticRTP>, peer_connection: Arc<RTCPeerConnection>) {
+
+    pub async fn register_broadcast(
+        &self, 
+        name: String, 
+        video_track: Arc<TrackLocalStaticRTP>,
+        audio_track: Arc<TrackLocalStaticRTP>
+    ) {
         let mut registry = self.registry.lock().await;
         info!("Registering broadcast: {}", name);
-        registry.insert(name.clone(), Broadcast { name, track, peer_connection });
+        registry.insert(name.clone(), Broadcast { video_track, audio_track });
     }
+
     pub async fn unregister_broadcast(&self, name: &str) {
         let mut registry = self.registry.lock().await;
         if registry.remove(name).is_some() {
@@ -35,9 +37,9 @@ impl BroadcastManager {
             warn!("Attempted to unregister non-existent broadcast: {}", name);
         }
     }
-    pub async fn get_broadcast(&self, name: &str) -> Option<Arc<TrackLocalStaticRTP>> {
-        let registry = self.registry.lock().await;
-        registry.get(name).map(|b| Arc::clone(&b.track))
-    }
 
+    pub async fn get_broadcast(&self, name: &str) -> Option<(Arc<TrackLocalStaticRTP>, Arc<TrackLocalStaticRTP>)> {
+        let registry = self.registry.lock().await;
+        registry.get(name).map(|b| (Arc::clone(&b.video_track), Arc::clone(&b.audio_track)))
+    }
 }

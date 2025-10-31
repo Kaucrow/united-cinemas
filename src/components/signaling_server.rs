@@ -9,7 +9,6 @@ use base64::{
 use actix_web::{ rt, web, App, Error, HttpRequest, HttpResponse, HttpServer };
 use actix_ws::AggregatedMessage;
 use futures_util::StreamExt;
-use serde_json::ser;
 
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct ClientPayload {
@@ -17,7 +16,6 @@ pub struct ClientPayload {
     pub name: String,
     pub sdp: String,
 }
-
 
 /// This message will be sent from the SignalingServer to the ws_handler via the ws_send channel
 pub enum ServerToClientMsg {
@@ -39,7 +37,7 @@ pub struct SignalingServer {
 }
 
 impl SignalingServer {
-    pub async fn new(port: u16) -> Result<Self> {
+    pub async fn new(host: String, port: u16) -> Result<Self> {
         let (ws_recv_tx, ws_recv_rx) = mpsc::channel::<SdpMessage>(1);
 
         // Create a channel for receiving the active WS sender
@@ -56,7 +54,7 @@ impl SignalingServer {
                     .app_data(ws_send_tx_data.clone()) // Inject the new sender
                     .route("/ws", web::get().to(ws_handler))
             })
-            .bind(("0.0.0.0", port))
+            .bind((host, port))
             .map_err(|e| anyhow!("Failed to bind Actix-Web server: {}", e))?
             .run();
 
@@ -114,7 +112,6 @@ async fn ws_handler(
     // The ws_handler will use this to send its own message-sender to the SignalingServer
     ws_send_tx: web::Data<mpsc::Sender<mpsc::Sender<ServerToClientMsg>>>,
 ) -> Result<HttpResponse, Error> {
-
     let (res, mut session, stream) = actix_ws::handle(&req, stream)?;
     let mut stream = stream.aggregate_continuations().max_continuation_size(2_usize.pow(20));
     let ws_recv_tx = ws_recv_tx.get_ref().clone();

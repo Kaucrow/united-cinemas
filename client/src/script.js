@@ -176,21 +176,37 @@ function sendOffer(sessionType, streamName) {
         }).catch(addToOutput)
     }
   } else {
+    // For viewers, add transceivers for both video and audio
     pc.addTransceiver('video');
+    pc.addTransceiver('audio');  // Added audio transceiver
+
     pc.createOffer()
       .then(d => pc.setLocalDescription(d))
       .catch(addToOutput)
 
     pc.ontrack = function (event) {
       var el = document.getElementById('video1');
-      el.srcObject = event.streams[0];
+      
+      // Check if we already have a stream attached
+      if (!el.srcObject) {
+        el.srcObject = new MediaStream();
+      }
+      
+      // Add the incoming track to our media stream
+      el.srcObject.addTrack(event.track);
       el.autoplay = true;
-      el.controls = false;
+      el.controls = true;  // Changed to true so users can control audio
+      
+      addToOutput(`Received ${event.track.kind} track from broadcast`);
+    }
+
+    // Handle connection state changes for better debugging
+    pc.onconnectionstatechange = function() {
+      addToOutput('Connection state: ' + pc.connectionState);
     }
   }
 }
 
-// probably gonna need to change this to handle JSON with action, name, sdp
 function setRemoteDescription(remoteDescription) {
   if (!pc) return;
 

@@ -1,5 +1,5 @@
 use crate::{
-    components::{ PeerConnectionFactory, TrackManager },
+    components::{ PeerConnectionFactory, TrackManager, BroadcastManager },
     prelude::*
 };
 use anyhow::Result;
@@ -7,15 +7,17 @@ use anyhow::Result;
 #[derive(Clone)]
 pub struct SessionManager {
     peer_conn_factory: Arc<PeerConnectionFactory>,
+    broadcast_manager: Arc<BroadcastManager>
 }
 
 impl SessionManager {
-    pub fn new(peer_conn_factory: Arc<PeerConnectionFactory>) -> Self {
-        Self { peer_conn_factory }
+    pub fn new(peer_conn_factory: Arc<PeerConnectionFactory>, broadcast_manager: Arc<BroadcastManager>) -> Self {
+        Self { peer_conn_factory, broadcast_manager }
     }
 
     pub async fn create_broadcaster_session(
         &self,
+        broadcast: String,
         offer: RTCSessionDescription,
         track_manager: &mut TrackManager
     ) -> Result<Arc<RTCPeerConnection>> {
@@ -28,11 +30,20 @@ impl SessionManager {
             .add_transceiver_from_kind(RTPCodecType::Video, None)
             .await?;
 
+        peer_connection
+            .add_transceiver_from_kind(RTPCodecType::Audio, None)
+            .await?;
+
         // Setup track handlers
         let _ = track_manager.setup_track_handlers(Arc::clone(&peer_connection))?;
 
         // Setup connection state handler
-        self.setup_conn_state_handler(Arc::clone(&peer_connection));
+        self.setup_conn_state_handler(
+            broadcast,
+            true,
+            Arc::clone(&peer_connection),
+            Arc::clone(&self.broadcast_manager)
+        ).await;
 
         // Handle offer
         peer_connection.set_remote_description(offer).await?;
@@ -42,15 +53,22 @@ impl SessionManager {
 
     pub async fn create_viewer_session(
         &self,
+        broadcast: String,
         offer: RTCSessionDescription,
-        local_track: Arc<TrackLocalStaticRTP>
+        video_track: Arc<TrackLocalStaticRTP>,
+        audio_track: Arc<TrackLocalStaticRTP>
     ) -> Result<Arc<RTCPeerConnection>> {
         let peer_connection = self.peer_conn_factory
-            .create_recv_only_peer_connection(local_track)
+            .create_recv_only_peer_connection(video_track, audio_track)
             .await?;
 
         // Setup connection state handler
-        self.setup_conn_state_handler(Arc::clone(&peer_connection));
+        self.setup_conn_state_handler(
+            broadcast,
+            false,
+            Arc::clone(&peer_connection),
+            Arc::clone(&self.broadcast_manager)
+        ).await;
 
         // Handle offer
         peer_connection.set_remote_description(offer).await?;
@@ -77,10 +95,32 @@ impl SessionManager {
             .ok_or_else(|| anyhow::anyhow!("Failed to get local description"))
     }
 
-    fn setup_conn_state_handler(&self, peer_connection: Arc<RTCPeerConnection>) {
+    async fn setup_conn_state_handler(
+        &self,
+        broadcast: String,
+        is_broadcaster: bool,
+        peer_connection: Arc<RTCPeerConnection>,
+        broadcast_manager: Arc<BroadcastManager>
+    ) {
         peer_connection.on_peer_connection_state_change(Box::new(
             move |s: RTCPeerConnectionState| {
-                debug!("Peer connection state has changed: {s}");
+                debug!("Broadcast '{}': Peer connection state has changed: {s}", &broadcast);
+
+                if is_broadcaster {
+                    match s {
+                        RTCPeerConnectionState::Closed => {
+                            let broadcast_manager = Arc::clone(&broadcast_manager);
+                            let broadcast = broadcast.clone();
+
+                            tokio::spawn(async move {
+                                debug!("Broadcast '{}': Broadcaster disconnected, unregistering", &broadcast);
+                                broadcast_manager.unregister_broadcast(&broadcast).await;
+                            });
+                        }
+                        _ => {}
+                    }
+                }
+
                 Box::pin(async {})
             }
         ));

@@ -11,7 +11,7 @@ use clap::Parser;
 
 struct Args {
     /// Signaling server host 
-    #[arg(short = 'H', long, default_value = "localhost")]
+    #[arg(short = 'H', long, default_value = "0.0.0.0")]
     pub host: String,
 
     /// Signaling server port

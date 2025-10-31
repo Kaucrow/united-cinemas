@@ -55,42 +55,58 @@ async fn main() -> Result<()> {
                 
                 info!("Broadcast '{}': SDP answer sent to broadcaster", broadcast);
  
-                // Wait for the video track to arrive, then register the broadcast
+                // Wait for both video and audio tracks to arrive, then register the broadcast
                 let broadcast_name = broadcast.clone();
                 let broadcast_manager_clone = Arc::clone(&broadcast_manager);
 
                 tokio::spawn(async move {
-                    debug!("Broadcast '{}': Waiting for video track from broadcaster", broadcast_name);
- 
-                    if let Some(local_track) = track_manager.get_track_receiver().recv().await {
-                        debug!("Broadcast '{}': Video track received, registering broadcast", broadcast_name);
+                    debug!("Broadcast '{}': Waiting for video and audio tracks from broadcaster", broadcast_name);
+
+                    // Wait for both tracks sequentially
+                    let video_track = track_manager.get_video_track_receiver().recv().await;
+                    let audio_track = track_manager.get_audio_track_receiver().recv().await;
+
+                    if let (Some(video_track), Some(audio_track)) = (&video_track, &audio_track) {
+                        debug!("Broadcast '{}': Both video and audio tracks received, registering broadcast", broadcast_name);
  
                         broadcast_manager_clone.register_broadcast(
                             broadcast_name.clone(),
-                            Arc::clone(&local_track),
+                            Arc::clone(video_track),
+                            Arc::clone(audio_track),
                         ).await;
 
-                        info!("Broadcast '{}': Ready for viewers", broadcast_name);
+                        info!("Broadcast '{}': Ready for viewers (with video and audio)", broadcast_name);
                     } else {
-                        debug!("Broadcast '{}': Failed to receive video track from broadcaster", broadcast_name);
+                        if video_track.is_none() {
+                            debug!("Broadcast '{}': Failed to receive video track from broadcaster", broadcast_name);
+                        }
+                        if audio_track.is_none() {
+                            debug!("Broadcast '{}': Failed to receive audio track from broadcaster", broadcast_name);
+                        }
+                        warn!("Broadcast '{}': Incomplete tracks received", broadcast_name);
                     }
                 });
             }
  
             "join" => {
                 info!("Broadcast '{}': Viewer wants to join broadcast", broadcast);
-                
+ 
                 // Look up the broadcast in the registry
-                if let Some(local_track) = broadcast_manager.get_broadcast(&broadcast).await {
-                    debug!("Broadcast '{}': Broadcast found in registry", broadcast);
+                if let Some((video_track, audio_track)) = broadcast_manager.get_broadcast(&broadcast).await {
+                    debug!("Broadcast '{}': Broadcast found in registry (with video and audio)", broadcast);
  
                     // Decode the SDP offer from the viewer
                     let offer = signaling.decode_sdp(&payload.sdp)?;
                     debug!("Broadcast '{}': Viewer SDP offer decoded", broadcast);
  
-                    // Create a WebRTC session to send video to the viewer
+                    // Create a WebRTC session to send video and audio to the viewer
                     let peer_connection = session_manager
-                        .create_viewer_session(broadcast.clone(), offer, Arc::clone(&local_track))
+                        .create_viewer_session(
+                            broadcast.clone(), 
+                            offer, 
+                            Arc::clone(&video_track),
+                            Arc::clone(&audio_track)
+                        )
                         .await?;
                     debug!("Broadcast '{}': WebRTC session created for viewer", broadcast);
  
@@ -99,7 +115,7 @@ async fn main() -> Result<()> {
                     let response = signaling.encode_sdp(&local_desc)?;
                     let _ = responder.send(response);
 
-                    info!("Broadcast '{}': Viewer connected", broadcast);
+                    info!("Broadcast '{}': Viewer connected (with video and audio)", broadcast);
                 } else {
                     debug!("Broadcast '{}': Broadcast not found in registry", broadcast);
                     // TODO: should send an error back to the client here

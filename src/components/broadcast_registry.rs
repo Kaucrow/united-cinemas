@@ -1,7 +1,8 @@
 use crate::prelude::*;
 
 pub struct Broadcast {
-    pub track: Arc<TrackLocalStaticRTP>,
+    pub video_track: Arc<TrackLocalStaticRTP>,
+    pub audio_track: Arc<TrackLocalStaticRTP>,
 }
 
 pub type BroadcastRegistry = Arc<Mutex<HashMap<String, Broadcast>>>;
@@ -21,10 +22,15 @@ impl BroadcastManager {
         Arc::clone(&self.registry)
     }
 
-    pub async fn register_broadcast(&self, name: String, track: Arc<TrackLocalStaticRTP>) {
+    pub async fn register_broadcast(
+        &self, 
+        name: String, 
+        video_track: Arc<TrackLocalStaticRTP>,
+        audio_track: Arc<TrackLocalStaticRTP>
+    ) {
         let mut registry = self.registry.lock().await;
         info!("Registering broadcast: {}", name);
-        registry.insert(name.clone(), Broadcast { track });
+        registry.insert(name.clone(), Broadcast { video_track, audio_track });
     }
 
     pub async fn unregister_broadcast(&self, name: &str) {
@@ -36,8 +42,8 @@ impl BroadcastManager {
         }
     }
 
-    pub async fn get_broadcast(&self, name: &str) -> Option<Arc<TrackLocalStaticRTP>> {
+    pub async fn get_broadcast(&self, name: &str) -> Option<(Arc<TrackLocalStaticRTP>, Arc<TrackLocalStaticRTP>)> {
         let registry = self.registry.lock().await;
-        registry.get(name).map(|b| Arc::clone(&b.track))
+        registry.get(name).map(|b| (Arc::clone(&b.video_track), Arc::clone(&b.audio_track)))
     }
 }

@@ -6,7 +6,7 @@ const joinSessionBtn = document.getElementById('joinSessionBtn');
 const streamNameInput = document.getElementById('streamName');
 var pc = null;
 
-const WS_URL = 'ws://localhost:8080/ws'
+const WS_URL = 'ws://192.168.1.101:8080/ws'
 
 async function startSession(sessionType) {
   console.log('Starting session...');
@@ -100,30 +100,65 @@ function sendOffer(sessionType, streamName) {
 };
 
   if (sessionType === 'broadcast') {
-    navigator.mediaDevices.getUserMedia({ video: true, audio: false })
-      .then(stream => {
-        stream.getTracks().forEach(track => pc.addTrack(track, stream));
-        document.getElementById('video1').srcObject = stream;
-        pc.createOffer()
-          .then(d => pc.setLocalDescription(d))
-          .catch(addToOutput)
-      }).catch(addToOutput)
+    // Request both video and audio for broadcasting
+    navigator.mediaDevices.getUserMedia({ 
+      video: true, 
+      audio: true  // Added audio
+    }).then(stream => {
+      // Add all tracks (both video and audio) to the peer connection
+      stream.getTracks().forEach(track => {
+        pc.addTrack(track, stream);
+        addToOutput(`Added ${track.kind} track to connection`);
+      });
+      document.getElementById('video1').srcObject = stream;
+      pc.createOffer()
+        .then(d => pc.setLocalDescription(d))
+        .catch(addToOutput)
+    }).catch(error => {
+      addToOutput('Failed to get media: ' + error);
+      // Fallback to video-only if audio fails
+      navigator.mediaDevices.getUserMedia({ video: true, audio: false })
+        .then(stream => {
+          stream.getTracks().forEach(track => pc.addTrack(track, stream));
+          document.getElementById('video1').srcObject = stream;
+          pc.createOffer()
+            .then(d => pc.setLocalDescription(d))
+            .catch(addToOutput)
+        })
+        .catch(addToOutput);
+    });
   } else {
+    // For viewers, add transceivers for both video and audio
     pc.addTransceiver('video');
+    pc.addTransceiver('audio');  // Added audio transceiver
+
     pc.createOffer()
       .then(d => pc.setLocalDescription(d))
       .catch(addToOutput)
 
     pc.ontrack = function (event) {
       var el = document.getElementById('video1');
-      el.srcObject = event.streams[0];
+      
+      // Check if we already have a stream attached
+      if (!el.srcObject) {
+        el.srcObject = new MediaStream();
+      }
+      
+      // Add the incoming track to our media stream
+      el.srcObject.addTrack(event.track);
       el.autoplay = true;
-      el.controls = false;
+      el.controls = true;  // Changed to true so users can control audio
+      
+      addToOutput(`Received ${event.track.kind} track from broadcast`);
+    }
+
+    // Handle connection state changes for better debugging
+    pc.onconnectionstatechange = function() {
+      addToOutput('Connection state: ' + pc.connectionState);
     }
   }
 }
 
-// probably gonna need to change this to handle JSON with action, name, sdp
 function setRemoteDescription(remoteDescription) {
   if (!pc) return;
 

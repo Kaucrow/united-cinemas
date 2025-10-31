@@ -29,6 +29,10 @@ impl SessionManager {
             .add_transceiver_from_kind(RTPCodecType::Video, None)
             .await?;
 
+        peer_connection
+            .add_transceiver_from_kind(RTPCodecType::Audio, None)
+            .await?;
+
         // Setup track handlers
         let _ = track_manager.setup_track_handlers(Arc::clone(&peer_connection))?;
 
@@ -45,10 +49,11 @@ impl SessionManager {
         &self,
         broadcast: String,
         offer: RTCSessionDescription,
-        local_track: Arc<TrackLocalStaticRTP>
+        video_track: Arc<TrackLocalStaticRTP>,
+        audio_track: Arc<TrackLocalStaticRTP>
     ) -> Result<Arc<RTCPeerConnection>> {
         let peer_connection = self.peer_conn_factory
-            .create_recv_only_peer_connection(local_track)
+            .create_recv_only_peer_connection(video_track, audio_track)
             .await?;
 
         // Setup connection state handler

@@ -35,16 +35,22 @@ impl PeerConnectionFactory {
 
     pub async fn create_recv_only_peer_connection(
         &self,
-        track: Arc<TrackLocalStaticRTP>
+        video_track: Arc<TrackLocalStaticRTP>,
+        audio_track: Arc<TrackLocalStaticRTP>,
     ) -> Result<Arc<RTCPeerConnection>> {
         let peer_connection = self.create_peer_connection().await?;
 
-        let rtp_sender = peer_connection
-            .add_track(track as Arc<dyn TrackLocal + Send + Sync>)
+        let video_sender = peer_connection
+            .add_track(video_track as Arc<dyn TrackLocal + Send + Sync>)
+            .await?;
+        
+        let audio_sender = peer_connection
+            .add_track(audio_track as Arc<dyn TrackLocal + Send + Sync>)
             .await?;
 
         // Handle RTCP packets
-        self.spawn_rtcp_handler(rtp_sender);
+        self.spawn_rtcp_handler(video_sender);
+        self.spawn_rtcp_handler(audio_sender);
 
         Ok(peer_connection)
     }

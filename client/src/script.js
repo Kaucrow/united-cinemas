@@ -150,7 +150,12 @@ function sendOffer(sessionType, streamName) {
               pc.addTrack(track, stream);
               addToOutput('Added video track from file to peer connection');
             });
-            
+
+            stream.getAudioTracks().forEach(track => {
+              pc.addTrack(track, stream);
+              addToOutput('Added audio track from file to peer connection');
+            });
+
             // Create and set offer
             pc.createOffer()
               .then(d => pc.setLocalDescription(d))
@@ -166,7 +171,7 @@ function sendOffer(sessionType, streamName) {
       
     } else {
       // Use camera
-      navigator.mediaDevices.getUserMedia({ video: true, audio: false })
+      navigator.mediaDevices.getUserMedia({ video: true, audio: true })
         .then(stream => {
           stream.getTracks().forEach(track => pc.addTrack(track, stream));
           document.getElementById('video1').srcObject = stream;

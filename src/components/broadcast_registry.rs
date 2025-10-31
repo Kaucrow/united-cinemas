@@ -1,11 +1,11 @@
 use crate::prelude::*;
 
-pub struct Broadcast {
+struct Broadcast {
     pub video_track: Arc<TrackLocalStaticRTP>,
     pub audio_track: Arc<TrackLocalStaticRTP>,
 }
 
-pub type BroadcastRegistry = Arc<Mutex<HashMap<String, Broadcast>>>;
+type BroadcastRegistry = Arc<Mutex<HashMap<String, Broadcast>>>;
 
 pub struct BroadcastManager {
     registry: BroadcastRegistry,
@@ -16,10 +16,6 @@ impl BroadcastManager {
         Self {
             registry: Arc::new(Mutex::new(HashMap::new())),
         }
-    }
-
-    pub fn get_registry(&self) -> BroadcastRegistry {
-        Arc::clone(&self.registry)
     }
 
     pub async fn register_broadcast(

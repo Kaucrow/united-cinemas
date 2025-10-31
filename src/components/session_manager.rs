@@ -1,5 +1,5 @@
 use crate::{
-    components::{ PeerConnectionFactory, TrackManager },
+    components::{ PeerConnectionFactory, TrackManager, BroadcastManager },
     prelude::*
 };
 use anyhow::Result;
@@ -7,11 +7,12 @@ use anyhow::Result;
 #[derive(Clone)]
 pub struct SessionManager {
     peer_conn_factory: Arc<PeerConnectionFactory>,
+    broadcast_manager: Arc<BroadcastManager>
 }
 
 impl SessionManager {
-    pub fn new(peer_conn_factory: Arc<PeerConnectionFactory>) -> Self {
-        Self { peer_conn_factory }
+    pub fn new(peer_conn_factory: Arc<PeerConnectionFactory>, broadcast_manager: Arc<BroadcastManager>) -> Self {
+        Self { peer_conn_factory, broadcast_manager }
     }
 
     pub async fn create_broadcaster_session(
@@ -37,7 +38,12 @@ impl SessionManager {
         let _ = track_manager.setup_track_handlers(Arc::clone(&peer_connection))?;
 
         // Setup connection state handler
-        self.setup_conn_state_handler(broadcast, Arc::clone(&peer_connection));
+        self.setup_conn_state_handler(
+            broadcast,
+            true,
+            Arc::clone(&peer_connection),
+            Arc::clone(&self.broadcast_manager)
+        ).await;
 
         // Handle offer
         peer_connection.set_remote_description(offer).await?;
@@ -57,7 +63,12 @@ impl SessionManager {
             .await?;
 
         // Setup connection state handler
-        self.setup_conn_state_handler(broadcast, Arc::clone(&peer_connection));
+        self.setup_conn_state_handler(
+            broadcast,
+            false,
+            Arc::clone(&peer_connection),
+            Arc::clone(&self.broadcast_manager)
+        ).await;
 
         // Handle offer
         peer_connection.set_remote_description(offer).await?;
@@ -84,10 +95,32 @@ impl SessionManager {
             .ok_or_else(|| anyhow::anyhow!("Failed to get local description"))
     }
 
-    fn setup_conn_state_handler(&self, broadcast: String, peer_connection: Arc<RTCPeerConnection>) {
+    async fn setup_conn_state_handler(
+        &self,
+        broadcast: String,
+        is_broadcaster: bool,
+        peer_connection: Arc<RTCPeerConnection>,
+        broadcast_manager: Arc<BroadcastManager>
+    ) {
         peer_connection.on_peer_connection_state_change(Box::new(
             move |s: RTCPeerConnectionState| {
-                debug!("Broadcast '{}': Peer connection state has changed: {s}", broadcast);
+                debug!("Broadcast '{}': Peer connection state has changed: {s}", &broadcast);
+
+                if is_broadcaster {
+                    match s {
+                        RTCPeerConnectionState::Closed => {
+                            let broadcast_manager = Arc::clone(&broadcast_manager);
+                            let broadcast = broadcast.clone();
+
+                            tokio::spawn(async move {
+                                debug!("Broadcast '{}': Broadcaster disconnected, unregistering", &broadcast);
+                                broadcast_manager.unregister_broadcast(&broadcast).await;
+                            });
+                        }
+                        _ => {}
+                    }
+                }
+
                 Box::pin(async {})
             }
         ));

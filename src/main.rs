@@ -21,8 +21,8 @@ async fn main() -> Result<()> {
     // Init components
     let mut signaling = SignalingServer::new(host.clone(), port).await?;
     let peer_conn_factory = Arc::new(PeerConnectionFactory::new().await?);
-    let session_manager = SessionManager::new(Arc::clone(&peer_conn_factory));
     let broadcast_manager = Arc::new(BroadcastManager::new());
+    let session_manager = SessionManager::new(Arc::clone(&peer_conn_factory), Arc::clone(&broadcast_manager));
 
     info!("Signaling server waiting for offer via WebSocket connection on ws://{}:{}/ws", host, port);
 

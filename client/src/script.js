@@ -113,63 +113,75 @@ function sendOffer(sessionType, streamName) {
 };
 
     if (sessionType === 'broadcast') {
-    const broadcastSource = document.querySelector('input[name="broadcastSource"]:checked').value;
-    
-    if (broadcastSource === 'video') {
-      // Use video file
-      const file = videoFileInput.files[0];
-      if (!file) {
-        addToOutput('Please select a video file first!');
-        return;
-      }
-      
-      addToOutput(`Loading video file: ${file.name}`);
-      const videoElement = document.getElementById('video1');
-      const fileURL = URL.createObjectURL(file);
-      
-      videoElement.src = fileURL;
-      videoElement.loop = true; // Loop the video
-      videoElement.muted = true; // Mute to avoid feedback
-      
-      videoElement.onloadedmetadata = function() {
-        addToOutput('Video file loaded, starting stream...');
+      const broadcastSource = document.querySelector('input[name="broadcastSource"]:checked').value;
+      if (broadcastSource === 'video') {
+        const file = videoFileInput.files[0];
+        if (!file) {
+          addToOutput('Please select a video file first!');
+          return;
+        }
         
-        // Wait for video to be ready to play
-        videoElement.play()
-          .then(() => {
-            // Capture stream from video element
+        addToOutput(`Loading video file: ${file.name}`);
+        const videoElement = document.getElementById('video1');
+        const fileURL = URL.createObjectURL(file);
+        
+        videoElement.src = fileURL;
+        videoElement.loop = true;
+        videoElement.muted = true; // Mute local playback
+        
+        // Wait for the video to be ready
+        videoElement.oncanplaythrough = async function() {
+          addToOutput('Video can play through, starting capture...');
+          
+          try {
+            // Ensure video is playing
+            await videoElement.play();
+            addToOutput('Video is playing');
+            
+            // Wait a bit for stabilization
+            await new Promise(resolve => setTimeout(resolve, 500));
+            
+            // Capture the stream
             const stream = videoElement.captureStream ? videoElement.captureStream() : videoElement.mozCaptureStream();
             
             if (!stream) {
-              addToOutput('Error: Browser does not support capturing stream from video element');
-              return;
+              throw new Error('Browser does not support captureStream');
             }
             
-            // Add video tracks to peer connection
-            stream.getVideoTracks().forEach(track => {
+            // Wait for tracks to be available
+            await new Promise(resolve => setTimeout(resolve, 100));
+ 
+            stream.getTracks().forEach(track => {
               pc.addTrack(track, stream);
-              addToOutput('Added video track from file to peer connection');
+              addToOutput(`Added ${track.kind} track to connection`);
             });
-
-            stream.getAudioTracks().forEach(track => {
-              pc.addTrack(track, stream);
-              addToOutput('Added audio track from file to peer connection');
-            });
-
+ 
             // Create and set offer
-            pc.createOffer()
-              .then(d => pc.setLocalDescription(d))
-              .catch(e => addToOutput('Error creating offer: ' + e));
-          })
-          .catch(e => addToOutput('Error playing video: ' + e));
-      };
-      
-      videoElement.onerror = function() {
-        addToOutput('Error loading video file');
-        URL.revokeObjectURL(fileURL);
-      };
-      
-    } else {
+            const offer = await pc.createOffer();
+            addToOutput('Created offer, setting local description');
+            await pc.setLocalDescription(offer);
+            addToOutput('Local description set successfully');
+            
+          } catch (error) {
+            addToOutput('Error in video capture: ' + error);
+            URL.revokeObjectURL(fileURL);
+          }
+        };
+        
+        videoElement.onerror = function() {
+          addToOutput('Error loading video file');
+          URL.revokeObjectURL(fileURL);
+        };
+        
+        // Fallback if canplaythrough doesn't fire
+        setTimeout(() => {
+          if (!videoElement.readyState) {
+            addToOutput('Video loading taking too long, attempting capture anyway...');
+            videoElement.oncanplaythrough();
+          }
+        }, 3000);
+      }
+     else {
       // Use camera
       navigator.mediaDevices.getUserMedia({ video: true, audio: true })
         .then(stream => {

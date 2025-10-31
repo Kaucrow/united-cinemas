@@ -4,9 +4,22 @@ const connStatus = document.getElementById('status');
 const broadcastBtn = document.getElementById('broadcastBtn');
 const joinSessionBtn = document.getElementById('joinSessionBtn');
 const streamNameInput = document.getElementById('streamName');
+const videoFileInput = document.getElementById('videoFile');
+const sourceCamera = document.getElementById('sourceCamera');
+const sourceVideo = document.getElementById('sourceVideo');
+const videoFileContainer = document.getElementById('videoFileContainer');
 var pc = null;
 
-const WS_URL = 'ws://192.168.1.101:8080/ws'
+const WS_URL = 'ws://localhost:8080/ws'
+
+// Show/hide video file input based on selection
+sourceCamera.addEventListener('change', function() {
+  videoFileContainer.style.display = 'none';
+});
+
+sourceVideo.addEventListener('change', function() {
+  videoFileContainer.style.display = 'block';
+});
 
 async function startSession(sessionType) {
   console.log('Starting session...');
@@ -99,34 +112,74 @@ function sendOffer(sessionType, streamName) {
   }
 };
 
-  if (sessionType === 'broadcast') {
-    // Request both video and audio for broadcasting
-    navigator.mediaDevices.getUserMedia({ 
-      video: true, 
-      audio: true  // Added audio
-    }).then(stream => {
-      // Add all tracks (both video and audio) to the peer connection
-      stream.getTracks().forEach(track => {
-        pc.addTrack(track, stream);
-        addToOutput(`Added ${track.kind} track to connection`);
-      });
-      document.getElementById('video1').srcObject = stream;
-      pc.createOffer()
-        .then(d => pc.setLocalDescription(d))
-        .catch(addToOutput)
-    }).catch(error => {
-      addToOutput('Failed to get media: ' + error);
-      // Fallback to video-only if audio fails
-      navigator.mediaDevices.getUserMedia({ video: true, audio: false })
+    if (sessionType === 'broadcast') {
+    const broadcastSource = document.querySelector('input[name="broadcastSource"]:checked').value;
+    
+    if (broadcastSource === 'video') {
+      // Use video file
+      const file = videoFileInput.files[0];
+      if (!file) {
+        addToOutput('Please select a video file first!');
+        return;
+      }
+      
+      addToOutput(`Loading video file: ${file.name}`);
+      const videoElement = document.getElementById('video1');
+      const fileURL = URL.createObjectURL(file);
+      
+      videoElement.src = fileURL;
+      videoElement.loop = true; // Loop the video
+      videoElement.muted = true; // Mute to avoid feedback
+      
+      videoElement.onloadedmetadata = function() {
+        addToOutput('Video file loaded, starting stream...');
+        
+        // Wait for video to be ready to play
+        videoElement.play()
+          .then(() => {
+            // Capture stream from video element
+            const stream = videoElement.captureStream ? videoElement.captureStream() : videoElement.mozCaptureStream();
+            
+            if (!stream) {
+              addToOutput('Error: Browser does not support capturing stream from video element');
+              return;
+            }
+            
+            // Add video tracks to peer connection
+            stream.getVideoTracks().forEach(track => {
+              pc.addTrack(track, stream);
+              addToOutput('Added video track from file to peer connection');
+            });
+
+            stream.getAudioTracks().forEach(track => {
+              pc.addTrack(track, stream);
+              addToOutput('Added audio track from file to peer connection');
+            });
+
+            // Create and set offer
+            pc.createOffer()
+              .then(d => pc.setLocalDescription(d))
+              .catch(e => addToOutput('Error creating offer: ' + e));
+          })
+          .catch(e => addToOutput('Error playing video: ' + e));
+      };
+      
+      videoElement.onerror = function() {
+        addToOutput('Error loading video file');
+        URL.revokeObjectURL(fileURL);
+      };
+      
+    } else {
+      // Use camera
+      navigator.mediaDevices.getUserMedia({ video: true, audio: true })
         .then(stream => {
           stream.getTracks().forEach(track => pc.addTrack(track, stream));
           document.getElementById('video1').srcObject = stream;
           pc.createOffer()
             .then(d => pc.setLocalDescription(d))
             .catch(addToOutput)
-        })
-        .catch(addToOutput);
-    });
+        }).catch(addToOutput)
+    }
   } else {
     // For viewers, add transceivers for both video and audio
     pc.addTransceiver('video');

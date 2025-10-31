@@ -7,12 +7,31 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <h1>WebRTC Thingamajig</h1>
+  <header class="site-header">
+    <img src="../static/united-cinemas-logo.png" alt="United Cinemas Logo" class="logo"/>
+    <h1 class="site-title">United Cinemas</h1>
+  </header>
  
   <div id="status" class="status disconnected">Disconnected</div>
   <div>
     <label for="streamName">Stream Name:</label>
     <input type="text" id="streamName" value="default-stream"/>
+  </div>
+
+  <div style="margin: 10px 0;">
+    <label>
+      <input type="radio" name="broadcastSource" value="camera" id="sourceCamera" checked>
+      Use Camera
+    </label>
+    <label style="margin-left: 15px;">
+      <input type="radio" name="broadcastSource" value="video" id="sourceVideo">
+      Use Video File
+    </label>
+  </div>
+
+  <div id="videoFileContainer" style="display: none; margin: 10px 0;">
+    <label for="videoFile">Select Video File:</label>
+    <input type="file" id="videoFile" accept="video/*"/>
   </div>
  
   <div>
@@ -22,8 +41,8 @@
 
   <video
     id="video1"
-    width="160"
-    height="120"
+    width="630"
+    height="220"
     autoplay
     muted
   ></video>
